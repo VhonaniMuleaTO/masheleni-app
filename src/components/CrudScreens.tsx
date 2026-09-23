@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Badge, Button, Card, SectionHeading, Table } from './ui'
+import { Badge, Button, Card, Checkbox, SectionHeading, Table } from './ui'
 import { supabase } from '../lib/supabase'
 
 type Category = { id: string; name: string }
@@ -118,6 +118,7 @@ export function BudgetItemsScreen() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(() => new Set())
 
   async function loadData() {
     setLoading(true)
@@ -199,6 +200,39 @@ export function BudgetItemsScreen() {
     setSaving(false)
   }
 
+  function toggleItemSelection(itemId: string, checked: boolean) {
+    setSelectedItemIds((current) => {
+      const next = new Set(current)
+      if (checked) next.add(itemId)
+      else next.delete(itemId)
+      return next
+    })
+  }
+
+  function toggleAllItems(checked: boolean) {
+    setSelectedItemIds(checked ? new Set(items.map((item) => item.id)) : new Set())
+  }
+
+  async function setSelectedItemsActive(isActive: boolean) {
+    if (selectedItemIds.size === 0) return
+    setSaving(true)
+    setError('')
+    const { error: updateError } = await supabase.from('budget_items').update({ is_active: isActive }).in('id', [...selectedItemIds])
+    if (updateError) setError(getErrorMessage(updateError, 'Could not update the selected items.'))
+    else {
+      let propagationError: string | null = null
+      if (isActive) {
+        for (const itemId of selectedItemIds) {
+          propagationError = propagationError ?? await ensureForwardEntries(itemId)
+        }
+      }
+      await loadData()
+      setSelectedItemIds(new Set())
+      if (propagationError) setError(propagationError)
+    }
+    setSaving(false)
+  }
+
   async function deleteItem(item: BudgetItem) {
     if (!window.confirm(`Delete ${item.name}? This will remove it from every monthly budget.`)) return
     setSaving(true)
@@ -209,6 +243,24 @@ export function BudgetItemsScreen() {
       const itemResult = await supabase.from('budget_items').delete().eq('id', item.id)
       if (itemResult.error) setError(getErrorMessage(itemResult.error, 'Could not delete budget item.'))
       else await loadData()
+    }
+    setSaving(false)
+  }
+
+  async function deleteSelectedItems() {
+    if (selectedItemIds.size === 0) return
+    if (!window.confirm(`Delete ${selectedItemIds.size} selected item${selectedItemIds.size === 1 ? '' : 's'}? This will remove them from every monthly budget.`)) return
+    setSaving(true)
+    setError('')
+    const entriesResult = await supabase.from('budget_entries').delete().in('budget_item_id', [...selectedItemIds])
+    if (entriesResult.error) setError(getErrorMessage(entriesResult.error, 'Could not delete the selected item entries.'))
+    else {
+      const itemsResult = await supabase.from('budget_items').delete().in('id', [...selectedItemIds])
+      if (itemsResult.error) setError(getErrorMessage(itemsResult.error, 'Could not delete the selected budget items.'))
+      else {
+        setSelectedItemIds(new Set())
+        await loadData()
+      }
     }
     setSaving(false)
   }
@@ -232,12 +284,23 @@ export function BudgetItemsScreen() {
   function renderTable(title: string, itemList: BudgetItem[], emptyMessage: string, _includeDetails: boolean) {
     void renderLegacyTable
     const isExpenseTable = title === 'ALL EXPENSES'
-    return <div className="border-t border-ink/8"><div className="p-5 pb-2"><SectionHeading title={title} /></div>{loading ? <p className="p-5 text-sm text-muted">Loading budget items...</p> : itemList.length === 0 ? <p className="p-5 text-sm text-muted">{emptyMessage}</p> : <Table><thead><tr className="border-y border-ink/8 text-[10px] font-bold uppercase tracking-[0.12em] text-muted"><th className="px-5 py-3">Item</th><th className="px-3 py-3">Category</th>{isExpenseTable && <><th className="px-3 py-3">Method</th><th className="px-3 py-3">Due day</th></>}<th className="px-3 py-3">Status</th><th className="px-5 py-3 text-right">Actions</th></tr></thead><tbody>{itemList.map((item) => <tr key={item.id} className={`border-b border-ink/6 last:border-0 ${!item.is_active ? 'opacity-55' : ''}`}><td className="px-5 py-4 text-sm font-semibold">{item.name}</td><td className="px-3 py-4 text-sm text-muted">{getCategoryName(item.categories)}</td>{isExpenseTable && <><td className="px-3 py-4 text-sm text-muted">{item.payment_method === 'debit_order' ? 'Debit order' : 'Manual'}</td><td className="px-3 py-4 text-sm text-muted">{item.due_day ?? '—'}</td></>}<td className="px-3 py-4"><Badge tone={item.is_active ? 'positive' : 'warning'}>{item.is_active ? 'Active' : 'Inactive'}</Badge></td><td className="px-5 py-4"><div className="flex justify-end gap-1"><Button variant="ghost" onClick={() => editItem(item)}>Edit</Button><Button variant="ghost" className={item.is_active ? 'text-coral-dark hover:bg-coral/8' : 'text-mint-dark hover:bg-mint/8'} onClick={() => void toggleActive(item)} disabled={saving}>{item.is_active ? 'Deactivate' : 'Activate'}</Button><Button variant="ghost" className="text-coral-dark hover:bg-coral/8" onClick={() => void deleteItem(item)} disabled={saving}>Delete</Button></div></td></tr>)}</tbody></Table>}</div>
+    return <div className="border-t border-ink/8"><div className="p-5 pb-2"><SectionHeading title={title} /></div>{loading ? <p className="p-5 text-sm text-muted">Loading budget items...</p> : itemList.length === 0 ? <p className="p-5 text-sm text-muted">{emptyMessage}</p> : <Table><thead><tr className="border-y border-ink/8 text-[10px] font-bold uppercase tracking-[0.12em] text-muted"><th className="w-12 px-3 py-3"><span className="sr-only">Select</span></th><th className="px-3 py-3">Item</th><th className="px-3 py-3">Category</th>{isExpenseTable && <><th className="px-3 py-3">Method</th><th className="px-3 py-3">Due day</th></>}<th className="px-3 py-3">Status</th><th className="px-5 py-3 text-right">Actions</th></tr></thead><tbody>{itemList.map((item) => <tr key={item.id} className={`border-b border-ink/6 last:border-0 ${!item.is_active ? 'opacity-55' : ''}`}><td className="px-3 py-4 text-center"><Checkbox checked={selectedItemIds.has(item.id)} label={`Select ${item.name}`} onChange={(checked) => toggleItemSelection(item.id, checked)} /></td><td className="px-3 py-4 text-sm font-semibold">{item.name}</td><td className="px-3 py-4 text-sm text-muted">{getCategoryName(item.categories)}</td>{isExpenseTable && <><td className="px-3 py-4 text-sm text-muted">{item.payment_method === 'debit_order' ? 'Debit order' : 'Manual'}</td><td className="px-3 py-4 text-sm text-muted">{item.due_day ?? '—'}</td></>}<td className="px-3 py-4"><Badge tone={item.is_active ? 'positive' : 'warning'}>{item.is_active ? 'Active' : 'Inactive'}</Badge></td><td className="px-5 py-4"><div className="flex justify-end gap-1"><Button variant="ghost" onClick={() => editItem(item)}>Edit</Button><Button variant="ghost" className={item.is_active ? 'text-coral-dark hover:bg-coral/8' : 'text-mint-dark hover:bg-mint/8'} onClick={() => void toggleActive(item)} disabled={saving}>{item.is_active ? 'Deactivate' : 'Activate'}</Button><Button variant="ghost" className="text-coral-dark hover:bg-coral/8" onClick={() => void deleteItem(item)} disabled={saving}>Delete</Button></div></td></tr>)}</tbody></Table>}</div>
   }
 
   return <div className="mx-auto max-w-[1200px] px-5 py-6 sm:px-8 lg:px-10 lg:py-9">
     <div className="mb-8"><h1 className="font-display text-3xl font-semibold uppercase tracking-[-0.06em] sm:text-4xl">BUDGET ITEMS</h1><p className="mt-2 max-w-xl text-sm text-muted">Manage recurring expenses and income without losing the history behind them.</p></div>
     {error && <Card className="mb-5 border-coral/30 bg-coral/6"><p className="text-sm font-semibold text-coral-dark">{error}</p></Card>}
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-[1.35rem] border border-ink/8 bg-surface px-4 py-3 shadow-[0_16px_40px_rgba(35,37,34,0.055)]">
+      <div className="flex items-center gap-2">
+        <Checkbox checked={items.length > 0 && selectedItemIds.size === items.length} indeterminate={selectedItemIds.size > 0 && selectedItemIds.size < items.length} label="Select all budget items" onChange={toggleAllItems} />
+        <span className="text-sm font-semibold">{selectedItemIds.size ? `${selectedItemIds.size} selected` : 'Select items'}</span>
+      </div>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="ghost" className="text-mint-dark hover:bg-mint/8" onClick={() => void setSelectedItemsActive(true)} disabled={saving || selectedItemIds.size === 0}>Enable selected</Button>
+        <Button variant="ghost" className="text-amber-dark hover:bg-amber/12" onClick={() => void setSelectedItemsActive(false)} disabled={saving || selectedItemIds.size === 0}>Disable selected</Button>
+        <Button variant="ghost" className="text-coral-dark hover:bg-coral/8" onClick={() => void deleteSelectedItems()} disabled={saving || selectedItemIds.size === 0}>Delete selected</Button>
+      </div>
+    </div>
     {renderForm('income', incomeForm, setIncomeForm, incomeItems, 'No income items yet.', false)}
     {renderForm('expense', expenseForm, setExpenseForm, expenseItems, 'No expense items yet.', true)}
   </div>

@@ -47,6 +47,25 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
   return <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.08em] ${styles[tone]}`}>{children}</span>
 }
 
+export function Checkbox({ checked, indeterminate = false, label, onChange }: { checked: boolean; indeterminate?: boolean; label: string; onChange: (checked: boolean) => void }) {
+  return <label className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md hover:bg-ink/6 focus-within:ring-2 focus-within:ring-amber/40">
+    <input
+      type="checkbox"
+      checked={checked}
+      aria-label={label}
+      ref={(element) => {
+        if (element) element.indeterminate = indeterminate
+      }}
+      onChange={(event) => onChange(event.target.checked)}
+      className="peer sr-only"
+    />
+    <span aria-hidden="true" className={`relative size-4 rounded border-2 transition-colors ${checked || indeterminate ? "border-amber-dark bg-amber" : "border-ink/25 bg-surface"}`}>
+      {checked && <span className="absolute left-[3px] top-0.5 size-1.5 rotate-45 border-b-2 border-r-2 border-ink" />}
+      {indeterminate && !checked && <span className="absolute inset-x-1 top-1/2 h-0.5 -translate-y-1/2 bg-ink" />}
+    </span>
+  </label>
+}
+
 export function Table({ children, className = '', ...props }: TableHTMLAttributes<HTMLTableElement>) {
   return <div className="overflow-x-auto"><table className={`w-full min-w-[620px] table-fixed border-collapse text-left break-words [&_th.text-right]:text-center [&_td.text-right]:text-center ${className}`} {...props}>{children}</table></div>
 }

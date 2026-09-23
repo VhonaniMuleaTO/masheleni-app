@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Card, Table } from "./ui";
+import { Button, Card, Checkbox, Table } from "./ui";
 import { supabase } from "../lib/supabase";
 
 type BudgetItem = {
@@ -173,12 +173,16 @@ function IncomeOverviewGroup({
   month: _month,
   onUpdate,
   showHeading,
+  selectedEntryIds,
+  onToggleEntry,
 }: {
   title: string;
   entries: BudgetEntry[];
   month: string;
   onUpdate: (entryId: string, changes: EntryChanges) => Promise<void>;
   showHeading: boolean;
+  selectedEntryIds: Set<string>;
+  onToggleEntry: (entryId: string, checked: boolean) => void;
 }) {
   if (entries.length === 0) return null;
   return (
@@ -191,7 +195,8 @@ function IncomeOverviewGroup({
       <Table className="table-fixed">
         <thead>
           <tr className="border-y border-ink/8 text-[10px] font-bold uppercase tracking-[0.12em] text-muted">
-            <th className="px-5 py-3">Item</th>
+            <th className="w-12 px-3 py-3"><span className="sr-only">Select</span></th>
+            <th className="px-3 py-3">Item</th>
             <th className="px-3 py-3">Category</th>
             <th className="px-3 py-3 text-right">Planned</th>
             <th className="px-3 py-3 text-right">Actual</th>
@@ -207,7 +212,14 @@ function IncomeOverviewGroup({
                 key={entry.id}
                 className="border-b border-ink/6 last:border-0 hover:bg-ink/[0.025]"
               >
-                <td className="px-5 py-3">
+                <td className="px-3 py-3 text-center">
+                  <Checkbox
+                    checked={selectedEntryIds.has(entry.id)}
+                    label={`Select ${item.name}`}
+                    onChange={(checked) => onToggleEntry(entry.id, checked)}
+                  />
+                </td>
+                <td className="px-3 py-3">
                   <p className="text-sm font-semibold">{item.name}</p>
                 </td>
                 <td className="px-3 py-3 text-sm text-muted">
@@ -251,11 +263,15 @@ function OverviewGroup({
   entries,
   month,
   onUpdate,
+  selectedEntryIds,
+  onToggleEntry,
 }: {
   title: string;
   entries: BudgetEntry[];
   month: string;
   onUpdate: (entryId: string, changes: EntryChanges) => Promise<void>;
+  selectedEntryIds: Set<string>;
+  onToggleEntry: (entryId: string, checked: boolean) => void;
 }) {
   const isIncome = title.startsWith("Income");
   const hideHeading = isIncome && title.includes("Manual payments");
@@ -268,6 +284,8 @@ function OverviewGroup({
         onUpdate={onUpdate}
         showHeading={!hideHeading}
         title={displayTitle}
+        selectedEntryIds={selectedEntryIds}
+        onToggleEntry={onToggleEntry}
       />
     );
   title = displayTitle;
@@ -280,7 +298,8 @@ function OverviewGroup({
       <Table className="table-fixed">
         <thead>
           <tr className="border-y border-ink/8 text-[10px] font-bold uppercase tracking-[0.12em] text-muted">
-            <th className="px-5 py-3">Item</th>
+            <th className="w-12 px-3 py-3"><span className="sr-only">Select</span></th>
+            <th className="px-3 py-3">Item</th>
             <th className="px-3 py-3">Category</th>
             <th className="px-3 py-3 text-right">Planned</th>
             <th className="px-3 py-3 text-right">Actual</th>
@@ -298,7 +317,14 @@ function OverviewGroup({
                 key={entry.id}
                 className={`border-b border-ink/6 last:border-0 ${entry.paid ? "bg-mint/12" : overdue ? "bg-coral/10" : "hover:bg-ink/[0.025]"}`}
               >
-                <td className="px-5 py-3">
+                <td className="px-3 py-3 text-center">
+                  <Checkbox
+                    checked={selectedEntryIds.has(entry.id)}
+                    label={`Select ${item.name}`}
+                    onChange={(checked) => onToggleEntry(entry.id, checked)}
+                  />
+                </td>
+                <td className="px-3 py-3">
                   <p className="text-sm font-semibold">{item.name}</p>
                 </td>
                 <td className="px-3 py-3 text-sm text-muted">
@@ -354,6 +380,9 @@ export function OverviewScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   async function loadMonth(month = selectedMonth) {
     setLoading(true);
@@ -377,6 +406,7 @@ export function OverviewScreen() {
       setEntries([]);
     } else {
       setMonthlyBudget(monthResult.data);
+      setSelectedEntryIds(new Set());
       setActiveItemCount(itemsResult.data?.length ?? 0);
       if (monthResult.data) {
         const entryResult = await supabase
@@ -576,6 +606,36 @@ export function OverviewScreen() {
     setSaving(false);
   }
 
+  function toggleEntrySelection(entryId: string, checked: boolean) {
+    setSelectedEntryIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(entryId);
+      else next.delete(entryId);
+      return next;
+    });
+  }
+
+  function toggleAllEntries(checked: boolean) {
+    setSelectedEntryIds(checked ? new Set(entries.map((entry) => entry.id)) : new Set());
+  }
+
+  async function deleteSelectedEntries() {
+    if (selectedEntryIds.size === 0) return;
+    if (!window.confirm(`Remove ${selectedEntryIds.size} selected item${selectedEntryIds.size === 1 ? "" : "s"} from ${formatMonth(selectedMonth)}?`)) return;
+    setSaving(true);
+    setError("");
+    const { error: deleteError } = await supabase
+      .from("budget_entries")
+      .delete()
+      .in("id", [...selectedEntryIds]);
+    if (deleteError) setError(getErrorMessage(deleteError, "Could not remove the selected items."));
+    else {
+      setEntries((current) => current.filter((entry) => !selectedEntryIds.has(entry.id)));
+      setSelectedEntryIds(new Set());
+    }
+    setSaving(false);
+  }
+
   async function updateEntry(entryId: string, changes: EntryChanges) {
     if (changes.remove) {
       const entry = entries.find((currentEntry) => currentEntry.id === entryId);
@@ -772,6 +832,20 @@ export function OverviewScreen() {
               </div>
             </div>
           </Card>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-[1.35rem] border border-ink/8 bg-surface px-4 py-3 shadow-[0_16px_40px_rgba(35,37,34,0.055)]">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                checked={entries.length > 0 && selectedEntryIds.size === entries.length}
+                indeterminate={selectedEntryIds.size > 0 && selectedEntryIds.size < entries.length}
+                label="Select all budget items"
+                onChange={toggleAllEntries}
+              />
+              <span className="text-sm font-semibold">{selectedEntryIds.size ? `${selectedEntryIds.size} selected` : "Select items"}</span>
+            </div>
+            <Button variant="ghost" className="text-coral-dark hover:bg-coral/8" onClick={() => void deleteSelectedEntries()} disabled={saving || selectedEntryIds.size === 0}>
+              Remove selected
+            </Button>
+          </div>
           <Card className="mt-6">
             <h2 className="mb-5 font-display text-2xl font-semibold tracking-[-0.04em]">
               INCOME
@@ -789,6 +863,8 @@ export function OverviewScreen() {
                   )}
                   month={selectedMonth}
                   onUpdate={updateEntry}
+                  selectedEntryIds={selectedEntryIds}
+                  onToggleEntry={toggleEntrySelection}
                 />
                 <OverviewGroup
                   title="Income · Manual payments"
@@ -797,6 +873,8 @@ export function OverviewScreen() {
                   )}
                   month={selectedMonth}
                   onUpdate={updateEntry}
+                  selectedEntryIds={selectedEntryIds}
+                  onToggleEntry={toggleEntrySelection}
                 />
               </div>
             )}
@@ -818,6 +896,8 @@ export function OverviewScreen() {
                   )}
                   month={selectedMonth}
                   onUpdate={updateEntry}
+                  selectedEntryIds={selectedEntryIds}
+                  onToggleEntry={toggleEntrySelection}
                 />
                 <OverviewGroup
                   title="Manual Payments"
@@ -826,6 +906,8 @@ export function OverviewScreen() {
                   )}
                   month={selectedMonth}
                   onUpdate={updateEntry}
+                  selectedEntryIds={selectedEntryIds}
+                  onToggleEntry={toggleEntrySelection}
                 />
               </div>
             )}
